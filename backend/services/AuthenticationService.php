@@ -151,6 +151,7 @@ final class AuthenticationService
         });
         audit($uid, 'register', 'user', $uid);
         NotificationService::toAdmins('new_user', 'New customer registered', "$name ($email) just registered.", 'admin-customers.html');
+        self::emailAdminsNewCustomer($name, $email, (string)($phone ?? ''), $trialDays);
 
         if ($verify) {
             $token = random_token();
@@ -161,6 +162,41 @@ final class AuthenticationService
         $u = q_one('SELECT id FROM users WHERE id = ?', [$uid]);
         login_session($u);
         return ['needs_verification' => false];
+    }
+
+    /**
+     * Emails the admin(s) when a new customer registers. Recipients: ADMIN_NOTIFY_EMAIL in backend/.env
+     * (comma-separated, optional); otherwise every active super admin account's email.
+     * Never lets a mail problem break registration.
+     */
+    private static function emailAdminsNewCustomer(string $name, string $email, string $phone, int $trialDays): void
+    {
+        try {
+            $to = [];
+            foreach (explode(',', (string)env('ADMIN_NOTIFY_EMAIL', '')) as $e) {
+                $e = trim($e);
+                if (filter_var($e, FILTER_VALIDATE_EMAIL)) $to[strtolower($e)] = true;
+            }
+            if (!$to) {
+                foreach (q_all("SELECT email FROM users WHERE role='super_admin' AND status='active' AND deleted_at IS NULL") as $a) {
+                    if (filter_var($a['email'], FILTER_VALIDATE_EMAIL)) $to[strtolower($a['email'])] = true;
+                }
+            }
+            $clean = fn(string $v): string => trim(preg_replace('/[\r\n]+/', ' ', $v));
+            $app = (string)setting('app_name', 'BudgetFlow');
+            $body = "A new customer just registered on $app.\n\n"
+                . 'Name:  ' . $clean($name) . "\n"
+                . 'Email: ' . $clean($email) . "\n"
+                . 'Phone: ' . ($phone !== '' ? $clean($phone) : '-') . "\n"
+                . "Free trial: $trialDays days\n"
+                . 'Time:  ' . gmdate('Y-m-d H:i') . " UTC\n\n"
+                . 'View customers: ' . self::appUrl() . "/admin-customers.html\n";
+            foreach (array_keys($to) as $addr) {
+                self::sendMail($addr, "New customer: " . $clean($name), $body);
+            }
+        } catch (Throwable $e) {
+            error_log('New-customer email failed: ' . $e->getMessage());
+        }
     }
 
     /** Re-sends the verification link (invalidates older unused links). Silent for unknown/already-verified emails. */

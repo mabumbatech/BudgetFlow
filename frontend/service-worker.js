@@ -1,4 +1,5 @@
-/* Service worker: fast loads + offline use. Never caches /api/ or any user data.
+/* Never stores or serves a redirected response (browsers refuse those for page loads: "This site can't be reached").
+   Service worker: fast loads + offline use. Never caches /api/ or any user data.
    VERSION is filled in automatically by the server (backend/sw.php) from the files' timestamps, so any
    uploaded change makes this file differ, the browser installs it, old copies are deleted and the page
    reloads by itself. Within one version the saved copies are exact, so they are served with no network wait. */
@@ -19,7 +20,7 @@ var PRECACHE = [
 ];
 
 self.addEventListener('install', function (e) {
-  e.waitUntil(caches.open(STATIC).then(function (c) { return Promise.all(PRECACHE.map(function (u) { return c.add(new Request(u, { cache: 'reload' })).catch(function () {}); })); }).then(function () { return self.skipWaiting(); }));
+  e.waitUntil(caches.open(STATIC).then(function (c) { return Promise.all(PRECACHE.map(function (u) { var r = new Request(u, { cache: 'reload' }); return fetch(r).then(function (res) { if (res && res.ok && !res.redirected) return c.put(r, res); }).catch(function () {}); })); }).then(function () { return self.skipWaiting(); }));
 });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (keys) { return Promise.all(keys.filter(function (k) { return k.indexOf(VERSION) !== 0; }).map(function (k) { return caches.delete(k); })); }).then(function () { return self.clients.claim(); }));
@@ -30,8 +31,8 @@ self.addEventListener('message', function (e) { if (e.data === 'skipWaiting') se
 function cacheFirst(e, req, bucket) {
   e.respondWith(caches.open(bucket).then(function (c) {
     return c.match(req, { ignoreSearch: true }).then(function (hit) {
-      if (hit) return hit;
-      return fetch(req, { cache: 'reload' }).then(function (res) { if (res && res.ok) c.put(req, res.clone()); return res; });
+      if (hit && !hit.redirected) return hit;
+      return fetch(req, { cache: 'reload' }).then(function (res) { if (res && res.ok && !res.redirected) c.put(req, res.clone()); return res; });
     });
   }));
 }
@@ -47,7 +48,7 @@ function fetchRetry(req) {
 function pageStrategy(e, req) {
   e.respondWith(caches.open(PAGES).then(function (c) {
     return caches.match(req, { ignoreSearch: true }).then(function (hit) {
-      if (hit) {
+      if (hit && !hit.redirected) {   // a saved redirect can never be shown to a page (browsers reject it), so it is ignored and re-fetched
         e.waitUntil(fetch(req, { cache: 'no-cache' }).then(function (res) { if (res && res.ok && !res.redirected) c.put(req, res.clone()); }).catch(function () {}));
         return hit;
       }

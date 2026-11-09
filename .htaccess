@@ -7,6 +7,10 @@ AddType application/manifest+json .webmanifest
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  # One address per page: force https
+  RewriteCond %{HTTPS} off
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
   # JSON API
   RewriteRule ^api/ backend/api/index.php [L,QSA]
   # Automatic updates: build id + service worker are generated from the files' own timestamps
@@ -30,6 +34,11 @@ AddType application/manifest+json .webmanifest
   Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
   <FilesMatch "\.html$">
     Header always set Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  </FilesMatch>
+  # Logged-in app pages are identical JavaScript shells and private: keep them out of Google
+  # (do NOT block them in robots.txt, or Google can never see this header).
+  <FilesMatch "^(dashboard|accounts|budgets|categories|debts|expenses|income|transactions|recurring|savings|reports|notifications|profile|settings|subscription|help|offline|reset-password|admin-[a-z]+)\.html$">
+    Header set X-Robots-Tag "noindex, nofollow"
   </FilesMatch>
   # Pages, scripts and styles: always re-check with the server so updates appear automatically.
   <FilesMatch "\.(html|js|css)$">
